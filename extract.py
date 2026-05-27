@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 # =========================================================
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://db_nako_user:3halkU77mrx0Gaw8HxpVqoDGDDNSDCpc@dpg-d7ngs4vlk1mc73d4p9m0-a.singapore-postgres.render.com/db_nako?sslmode=require"
+    "postgresql://postgresql_etl_eph8_user:uZ5XeN5IokS7oN0DnCNp1JGXzezLtvqQ@dpg-d8b6phel51nc739dqrs0-a.singapore-postgres.render.com/postgresql_etl_eph8"
 )
 
 engine = create_engine(DATABASE_URL)
