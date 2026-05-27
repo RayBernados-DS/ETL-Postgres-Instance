@@ -1,72 +1,182 @@
 import pandas as pd
-import sqlite3
 import os
+from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 
+# =========================================================
+# DATABASE CONNECTION
+# Render automatically provides DATABASE_URL
+# =========================================================
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable not found.")
+
+# Create PostgreSQL engine
+engine = create_engine(DATABASE_URL)
+
+# =========================================================
+# PROJECT ROOT DIRECTORY
+# This makes the script work on Render deployment
+# =========================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Source CSV folder
+BASE_PATH = os.path.join(BASE_DIR, "data", "source")
+
+# =========================================================
+# CSV CONFIGURATION
+# =========================================================
+STAGING_CONFIGS = {
+
+    "japan_store": [
+        "japan_branch.csv",
+        "japan_Customers.csv",
+        "japan_items.csv",
+        "japan_payment.csv",
+        "japan_sales_data.csv"
+    ],
+
+    "myanmar_store": [
+        "myanmar_branch.csv",
+        "myanmar_customers.csv",
+        "myanmar_items.csv",
+        "myanmar_payment.csv",
+        "myanmar_sales_data.csv"
+    ]
+}
+
+# =========================================================
+# CLEAN COLUMN NAMES
+# =========================================================
+def clean_column_names(df):
+
+    df.columns = (
+        df.columns
+        .str.replace("'", "", regex=False)
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_")
+    )
+
+    return df
+
+# =========================================================
+# EXTRACT CSV TO POSTGRESQL
+# =========================================================
 def load_csv():
-    # 1. Set the root path where your CSV folders are located
-    # Ensure this matches the folder where you are running the script
-    base_path = r"C:\Users\phant\OneDrive\Documents\ADMS Final\Data\source"
-    
-    # Configuration: Mapping Databases to their specific subfolders and files
-    staging_configs = {
-        "japan staging area.db": {
-            "folder": "japan_store",
-            "files": [
-                "japan_branch.csv", 
-                "japan_Customers.csv", 
-                "japan_items.csv", 
-                "japan_payment.csv", 
-                "japan_sales_data.csv"
-            ]
-        },
-        "myanmar staging area.db": {
-            "folder": "myanmar_store",
-            "files": [
-                "myanmar_branch.csv", 
-                "myanmar_customers.csv", 
-                "myanmar_items.csv", 
-                "myanmar_payment.csv", 
-                "myanmar_sales_data.csv"
-            ]
-        }
-    }
 
-    print("--- Starting Extraction ---\n")
+    print("\n===================================")
+    print("STARTING EXTRACTION PROCESS")
+    print("===================================\n")
 
-    for db_name, config in staging_configs.items():
-        # Connect to the database file (created in the same folder as the script)
-        conn = sqlite3.connect(db_name)
-        folder_name = config["folder"]
-        
-        print(f"Checking Database: {db_name}")
+    total_files = 0
+    successful_files = 0
+    failed_files = 0
 
-        for file_name in config["files"]:
-            # Construct the full path to the CSV file
-            full_path = os.path.join(base_path, folder_name, file_name)
+    # Loop through folders
+    for folder_name, files in STAGING_CONFIGS.items():
 
+        print(f"\nProcessing folder: {folder_name}")
+
+        # Build folder path
+        folder_path = os.path.join(BASE_PATH, folder_name)
+
+        # Check if folder exists
+        if not os.path.exists(folder_path):
+            print(f"[ERROR] Folder not found: {folder_path}")
+            continue
+
+        # Process each CSV file
+        for file_name in files:
+
+            total_files += 1
+
+            full_path = os.path.join(folder_path, file_name)
+
+            print(f"\nReading: {file_name}")
+
+            # Check file existence
             if not os.path.exists(full_path):
-                print(f" [ERROR] Not found: {full_path}")
+                print(f"[ERROR] File not found: {full_path}")
+                failed_files += 1
                 continue
 
             try:
-                # Load CSV
+
+                # =================================================
+                # READ CSV
+                # =================================================
                 df = pd.read_csv(full_path)
-                
-                # Create table name from filename
-                table_name = file_name.replace(".csv", "").lower()
-                
-                # Write to SQL
-                df.to_sql(table_name, conn, if_exists='replace', index=False)
-                
-                # Success Verification
-                db_count = pd.read_sql_query(f"SELECT COUNT(*) FROM `{table_name}`", conn).iloc[0, 0]
-                print(f" [SUCCESS] Extracted {file_name} -> {db_count} rows.")
+
+                # =================================================
+                # CLEAN COLUMN NAMES
+                # =================================================
+                df = clean_column_names(df)
+
+                # =================================================
+                # REMOVE DUPLICATES
+                # =================================================
+                df = df.drop_duplicates()
+
+                # =================================================
+                # GENERATE TABLE NAME
+                # =================================================
+                table_name = (
+                    file_name
+                    .replace(".csv", "")
+                    .lower()
+                )
+
+                # =================================================
+                # LOAD TO POSTGRESQL
+                # =================================================
+                df.to_sql(
+                    table_name,
+                    engine,
+                    if_exists='replace',
+                    index=False
+                )
+
+                print(f"[SUCCESS] Uploaded table: {table_name}")
+                print(f"Rows inserted: {len(df)}")
+
+                successful_files += 1
+
+            except pd.errors.EmptyDataError:
+                print(f"[FAILED] Empty CSV file: {file_name}")
+                failed_files += 1
+
+            except pd.errors.ParserError as e:
+                print(f"[FAILED] CSV parsing error in {file_name}")
+                print(f"Reason: {e}")
+                failed_files += 1
+
+            except SQLAlchemyError as e:
+                print(f"[FAILED] Database error while uploading {file_name}")
+                print(f"Reason: {e}")
+                failed_files += 1
 
             except Exception as e:
-                print(f" [FAILED] {file_name}: {e}")
+                print(f"[FAILED] Unexpected error in {file_name}")
+                print(f"Reason: {e}")
+                failed_files += 1
 
-        conn.close()
-        print(f"Finished {db_name}\n")
+    # =========================================================
+    # FINAL SUMMARY
+    # =========================================================
+    print("\n===================================")
+    print("EXTRACTION SUMMARY")
+    print("===================================")
 
+    print(f"Total files processed : {total_files}")
+    print(f"Successful uploads    : {successful_files}")
+    print(f"Failed uploads        : {failed_files}")
+
+    print("\nEXTRACTION FINISHED\n")
+
+# =========================================================
+# MAIN EXECUTION
+# =========================================================
 if __name__ == "__main__":
     load_csv()
