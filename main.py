@@ -4,7 +4,7 @@ from load import load_presentation
 
 def run_pipeline():
 
-    print("\n=== STARTING ETL PIPELINE ===\n")
+    print("\n========== ETL PIPELINE START ==========\n")
 
     load_csv()
 
@@ -12,7 +12,7 @@ def run_pipeline():
 
     load_presentation()
 
-    print("\n=== ETL FINISHED SUCCESSFULLY ===\n")
+    print("\n========== ETL PIPELINE COMPLETE ==========\n")
 
 if __name__ == "__main__":
     run_pipeline()

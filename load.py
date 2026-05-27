@@ -1,70 +1,124 @@
 import pandas as pd
-import sqlite3
 import os
+from sqlalchemy import create_engine
 
+# =========================================================
+# DATABASE CONNECTION
+# =========================================================
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://db_nako_user:3halkU77mrx0Gaw8HxpVqoDGDDNSDCpc@dpg-d7ngs4vlk1mc73d4p9m0-a.singapore-postgres.render.com/db_nako?sslmode=require"
+)
+
+engine = create_engine(DATABASE_URL)
+
+# =========================================================
+# LOAD FUNCTION
+# =========================================================
 def load_presentation():
-    # ... (paths same as before)
-    presentation_dir = r"C:\Users\phant\OneDrive\Documents\ADMS Final\Data\Presentation"
-    db_final = os.path.join(presentation_dir, "BIG TABLE.db")
 
     try:
-        # --- 1. PROCESS JAPAN ---
-        conn_j = sqlite3.connect("japan staging area.db")
-        
-        # We use quote marks around the column names because the CSV had 
-        # literal single quotes in the header (e.g., 'product_id')
+
+        print("\n===== STARTING LOAD PROCESS =====\n")
+
+        # =====================================================
+        # JAPAN
+        # =====================================================
+        print("Loading Japan sales data...")
+
         query_j = """
-            SELECT 
-                s."'invoice_id'" as invoice_id, 
-                s."'product_id'" as product_id, 
-                s."'quantity'" as quantity, 
-                s."'date'" as date,
-                i.product_name, 
-                i.category, 
-                i.price 
-            FROM japan_sales_data s
-            JOIN japan_items i ON s."'product_id'" = i.id
+        SELECT
+            s.invoice_id,
+            s.product_id,
+            s.quantity,
+            s.date,
+            i.product_name,
+            i.category,
+            i.price_usd
+        FROM japan_sales_data s
+        JOIN clean_japan_items i
+        ON s.product_id = i.id
         """
-        df_j = pd.read_sql_query(query_j, conn_j)
-        
-        df_j['total_usd'] = (df_j['price'] * df_j['quantity']) * 0.0065
+
+        df_j = pd.read_sql(query_j, engine)
+
+        df_j['total_usd'] = (
+            df_j['price_usd'] *
+            df_j['quantity']
+        )
+
         df_j['country'] = 'Japan'
-        conn_j.close()
 
-        # --- 2. PROCESS MYANMAR ---
-        conn_m = sqlite3.connect("myanmar staging area.db")
-        # Myanmar also has single quotes in the headers!
+        # =====================================================
+        # MYANMAR
+        # =====================================================
+        print("Loading Myanmar sales data...")
+
         query_m = """
-            SELECT 
-                s."'invoice_id'" as invoice_id, 
-                s."'product_id'" as product_id, 
-                s."'quantity'" as quantity, 
-                s."'date'" as date,
-                i.name as product_name, 
-                i.type as category, 
-                i.price 
-            FROM myanmar_sales_data s
-            JOIN myanmar_items i ON s."'product_id'" = i.id
+        SELECT
+            s.invoice_id,
+            s.product_id,
+            s.quantity,
+            s.date,
+            i.product_name,
+            i.category,
+            i.price_usd
+        FROM myanmar_sales_data s
+        JOIN clean_myanmar_items i
+        ON s.product_id = i.id
         """
-        df_m = pd.read_sql_query(query_m, conn_m)
-        
-        df_m['total_usd'] = df_m['price'] * df_m['quantity']
+
+        df_m = pd.read_sql(query_m, engine)
+
+        df_m['total_usd'] = (
+            df_m['price_usd'] *
+            df_m['quantity']
+        )
+
         df_m['country'] = 'Myanmar'
-        conn_m.close()
 
-        # --- 3. CONSOLIDATE ---
-        cols = ['invoice_id', 'product_name', 'category', 'quantity', 'total_usd', 'country', 'date']
-        big_table = pd.concat([df_j[cols], df_m[cols]], ignore_index=True)
+        # =====================================================
+        # FINAL CONSOLIDATION
+        # =====================================================
+        final_columns = [
+            'invoice_id',
+            'product_name',
+            'category',
+            'quantity',
+            'total_usd',
+            'country',
+            'date'
+        ]
 
-        # --- 4. LOAD ---
-        conn_final = sqlite3.connect(db_final)
-        big_table.to_sql("final_global_sales", conn_final, if_exists='replace', index=False)
-        
-        print(f"[SUCCESS] Big Table created with {len(big_table)} rows at {db_final}")
-        conn_final.close()
+        final_table = pd.concat(
+            [
+                df_j[final_columns],
+                df_m[final_columns]
+            ],
+            ignore_index=True
+        )
+
+        # =====================================================
+        # SAVE FINAL TABLE
+        # =====================================================
+        final_table.to_sql(
+            "final_global_sales",
+            engine,
+            if_exists='replace',
+            index=False
+        )
+
+        print("[SUCCESS] final_global_sales created")
+        print(f"Rows loaded: {len(final_table)}")
+
+        print("\n===== LOAD COMPLETE =====\n")
 
     except Exception as e:
-        print(f"[ERROR] Could not finish Presentation layer: {e}")
+        print("[ERROR] Load process failed")
+        print(e)
 
+# =========================================================
+# MAIN
+# =========================================================
 if __name__ == "__main__":
     load_presentation()

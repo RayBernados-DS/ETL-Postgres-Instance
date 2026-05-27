@@ -1,80 +1,106 @@
 import pandas as pd
-import sqlite3
 import os
+from sqlalchemy import create_engine
 
-def clean_sqlite_table():
-    """
-    Reads from the staging folder, performs data cleaning, 
-    and standardizes currency and columns.
-    """
-    # 1. Paths
-    staging_dir = r"C:\Users\phant\OneDrive\Documents\ADMS Final\Data\Staging"
-    # We will save the cleaned result to a new 'Transformation' database
-    trans_db_path = os.path.join(staging_dir, "transformed_data.db")
-    
-    # Database sources
-    db_j_path = os.path.join(staging_dir, "japan staging area.db")
-    db_m_path = os.path.join(staging_dir, "myanmar staging area.db")
+# =========================================================
+# DATABASE CONNECTION
+# =========================================================
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://db_nako_user:3halkU77mrx0Gaw8HxpVqoDGDDNSDCpc@dpg-d7ngs4vlk1mc73d4p9m0-a.singapore-postgres.render.com/db_nako?sslmode=require"
+)
 
-    # Check if staging databases exist
-    if not os.path.exists(db_j_path) or not os.path.exists(db_m_path):
-        print("[ERROR] Staging databases not found. Please check the directory.")
-        return
+engine = create_engine(DATABASE_URL)
 
-    conn_trans = sqlite3.connect(trans_db_path)
+# =========================================================
+# TRANSFORMATION FUNCTION
+# =========================================================
+def transform_data():
 
     try:
-        # --- 2. CLEAN JAPAN DATA ---
-        print("Cleaning Japan data...")
-        conn_j = sqlite3.connect(db_j_path)
-        # We read the items specifically to fix the price
-        df_j_items = pd.read_sql_query("SELECT * FROM japan_items", conn_j)
-        
-        # 1. Strip whitespace from column names
-        df_j_items.columns = df_j_items.columns.str.strip()
-        
-        # 2. Strip whitespace from text columns
-        df_j_items['product_name'] = df_j_items['product_name'].str.strip()
-        
-        # 3. Currency Conversion: JPY to USD (Approx 1 JPY = 0.0065 USD)
-        df_j_items['price_usd'] = df_j_items['price'] * 0.0065
-        
-        # 4. Drop duplicates
-        df_j_items = df_j_items.drop_duplicates()
-        
-        # Save to transformation DB
-        df_j_items.to_sql("clean_japan_items", conn_trans, if_exists='replace', index=False)
-        conn_j.close()
 
-        # --- 3. CLEAN MYANMAR DATA ---
-        print("Cleaning Myanmar data...")
-        conn_m = sqlite3.connect(db_m_path)
-        df_m_items = pd.read_sql_query("SELECT * FROM myanmar_items", conn_m)
-        
-        # 1. Strip whitespace
-        df_m_items.columns = df_m_items.columns.str.strip()
-        df_m_items['name'] = df_m_items['name'].str.strip()
-        
-        # 2. Standardization: Rename columns to match Japan
-        # (Myanmar has 'name' and 'type' vs Japan's 'product_name' and 'category')
-        df_m_items = df_m_items.rename(columns={'name': 'product_name', 'type': 'category'})
-        
-        # 3. Myanmar is already in USD, but let's create the column for consistency
-        df_m_items['price_usd'] = df_m_items['price']
-        
-        # 4. Drop duplicates
-        df_m_items = df_m_items.drop_duplicates()
-        
-        # Save to transformation DB
-        df_m_items.to_sql("clean_myanmar_items", conn_trans, if_exists='replace', index=False)
-        conn_m.close()
+        print("\n===== STARTING TRANSFORMATION =====\n")
 
-        print(f"\n[SUCCESS] Cleaned data saved to: {trans_db_path}")
+        # =====================================================
+        # JAPAN
+        # =====================================================
+        print("Transforming Japan items...")
+
+        df_j = pd.read_sql(
+            "SELECT * FROM japan_items",
+            engine
+        )
+
+        df_j.columns = df_j.columns.str.strip()
+
+        df_j['product_name'] = (
+            df_j['product_name']
+            .astype(str)
+            .str.strip()
+        )
+
+        # Currency conversion
+        df_j['price_usd'] = df_j['price'] * 0.0065
+
+        # Remove duplicates
+        df_j = df_j.drop_duplicates()
+
+        df_j.to_sql(
+            "clean_japan_items",
+            engine,
+            if_exists='replace',
+            index=False
+        )
+
+        print("[SUCCESS] clean_japan_items created")
+
+        # =====================================================
+        # MYANMAR
+        # =====================================================
+        print("Transforming Myanmar items...")
+
+        df_m = pd.read_sql(
+            "SELECT * FROM myanmar_items",
+            engine
+        )
+
+        df_m.columns = df_m.columns.str.strip()
+
+        df_m['name'] = (
+            df_m['name']
+            .astype(str)
+            .str.strip()
+        )
+
+        # Standardize schema
+        df_m = df_m.rename(columns={
+            'name': 'product_name',
+            'type': 'category'
+        })
+
+        # Myanmar already USD
+        df_m['price_usd'] = df_m['price']
+
+        # Remove duplicates
+        df_m = df_m.drop_duplicates()
+
+        df_m.to_sql(
+            "clean_myanmar_items",
+            engine,
+            if_exists='replace',
+            index=False
+        )
+
+        print("[SUCCESS] clean_myanmar_items created")
+
+        print("\n===== TRANSFORMATION COMPLETE =====\n")
 
     except Exception as e:
-        print(f"[ERROR] Cleaning failed: {e}")
-    finally:
-        conn_trans.close()
+        print(f"[ERROR] Transformation failed")
+        print(e)
 
+# =========================================================
+# MAIN
+# =========================================================
 if __name__ == "__main__":
-    clean_sqlite_table()
+    transform_data()
